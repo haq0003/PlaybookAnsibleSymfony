@@ -1,0 +1,73 @@
+---
+- name: ">>>>> Clear existing cache"
+  shell:
+    " cd {{PRJ_REMOTE_PATH}}/current \
+     && rm -Rf var/cache/* "
+  register: result
+  failed_when: "'error' in result.stderr"
+- debug: var=result.stdout_lines
+- debug: var=result.stderr
+
+- name: ">>>>> Run composer install"
+  shell:
+    " cd {{PRJ_REMOTE_PATH}}/current \
+     && php composer.phar update symfony/flex --no-plugins --no-scripts \
+     && php -d memory_limit=-1 composer.phar -n install"
+  when: "hostvars['localhost']['addEnvLocal'] == true "
+
+- name: ">>>>> Run composer update"
+  shell:
+    " cd {{PRJ_REMOTE_PATH}}/current \
+     && php composer.phar update symfony/flex --no-plugins --no-scripts \
+     && php -d memory_limit=-1 composer.phar -n update"
+  when: "hostvars['localhost']['addEnvLocal'] != true "
+
+- name: ">>>>> npm install"
+  shell:
+    " cd {{PRJ_REMOTE_PATH}}/current \
+     && npm install"
+  register: result
+  failed_when: "'error' in result.stderr"
+- debug: var=result.stdout_lines
+- debug: var=result.stderr
+
+- name: ">>>>> fix error on production with sync-rpc on OVH only "
+  shell:
+    " cd {{PRJ_REMOTE_PATH}}/current \
+     && sed  '12s/.*/const forceSync = function(){};/' node_modules/@symfony/webpack-encore/lib/loaders/eslint.js > node_modules/@symfony/webpack-encore/lib/loaders/eslint.js.tmp \
+     && sed  '12s/.*/const forceSync = function(){};/' node_modules/@symfony/webpack-encore/lib/plugins/eslint.js > node_modules/@symfony/webpack-encore/lib/plugins/eslint.js.tmp \
+     && cp node_modules/@symfony/webpack-encore/lib/loaders/eslint.js.tmp node_modules/@symfony/webpack-encore/lib/loaders/eslint.js \
+     && cp node_modules/@symfony/webpack-encore/lib/plugins/eslint.js.tmp node_modules/@symfony/webpack-encore/lib/plugins/eslint.js"
+  register: result
+  failed_when: "'error' in result.stderr"
+- debug: var=result.stdout_lines
+- debug: var=result.stderr
+
+- name: ">>>>> compile assets with yarn dev "
+  shell:
+    " cd {{PRJ_REMOTE_PATH}}/current \
+     && {{hostvars['localhost']['env_vars']['YARN_PATH']}} run dev "
+  when: "hostvars['localhost']['toEnv'] != 'prod'"
+  register: result
+  failed_when: "('error' in result.stderr) or ('introuvable' in result.stderr)"
+- debug: var=result.stdout_lines
+- debug: var=result.stderr
+
+- name: ">>>>> compile assets with yarn prod"
+  shell:
+    " cd {{PRJ_REMOTE_PATH}}/current \
+     && {{hostvars['localhost']['env_vars']['YARN_PATH']}} build "
+  when: "hostvars['localhost']['toEnv'] == 'prod'"
+  register: result
+  failed_when: "('error' in result.stderr) or ('introuvable' in result.stderr)"
+- debug: var=result.stdout_lines
+- debug: var=result.stderr
+
+- name: ">>>>> clear symfony cache"
+  shell:
+    " cd {{PRJ_REMOTE_PATH}}/current \
+     && php bin/console cache:clear "
+  register: result
+  failed_when: "'error' in result.stderr"
+- debug: var=result.stdout_lines
+- debug: var=result.stderr
