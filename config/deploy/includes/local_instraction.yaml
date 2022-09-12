@@ -1,0 +1,38 @@
+---
+- name: ">>>>> Backup json 1/2"
+  shell:
+    " find {{ env_vars.PRJ_LOCAL_PATH }}/bck/json/* -maxdepth 0 -type d -cmin +120 -exec rm -r {} \\; "
+  register: result
+  failed_when: "'error' in result.stderr"
+- debug: var=result.stdout_lines
+- debug: var=result.stderr
+
+- name: ">>>>> Backup json 2/2"
+  shell:
+    " cd {{ env_vars.PRJ_LOCAL_PATH }} && min=$(date +%H%M) &&  mkdir -p ./bck/json/$min && find ./public -name '*.json' -exec cp --parents \\{\\} ./bck/json/$min  \\;  "
+  register: result
+  failed_when: "'error' in result.stderr"
+- debug: var=result.stdout_lines
+- debug: var=result.stderr
+
+- name: ">>>>> Compile with yarn  "
+  shell:
+    " source {{ lookup('env', 'NVM_DIR') }}/nvm.sh \
+    && nvm use 16 \
+    && cd {{ env_vars.PRJ_LOCAL_PATH }} \
+    && yarn run dev "
+  args:
+    executable: /bin/bash
+  register: result
+  failed_when: "'error' in result.stderr"
+- debug: var=result.stdout_lines
+- debug: var=result.stderr
+
+- name: "Clear symfony cache"
+  shell:
+    " cd {{ env_vars.PRJ_LOCAL_PATH }} && \
+    php bin/console cache:clear --env=dev "
+  register: result
+  failed_when: "'error' in result.stderr"
+- debug: var=result.stdout_lines
+- debug: var=result.stderr
