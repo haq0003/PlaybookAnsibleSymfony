@@ -1,0 +1,182 @@
+# Command : ansible-playbook -i .hosts.yaml config/deploy/main.yaml
+---
+##############
+# Fetch all variables that we need from .env.local
+##############
+- name: Prepare deploy
+  hosts: localhost
+  tasks:
+    - name: Get env file content
+      slurp:
+        src: ../../.env.local
+      register: env_file_content
+    - debug: msg={{ env_file_content }}
+
+    - name: Parse env file content
+      set_fact:
+        env_vars: "{{ ( '{' + ((env_file_content.content | b64decode).split('\n') | select  | map('regex_replace', '^#(.*)', '') | map('regex_replace', '([^=]*)=(.*)', '\"\\1\": \"\\2\"')  | join(',')) + '}'  ) }}"
+    - debug: msg={{ env_vars }}
+
+
+##############
+# Refresh and compile dev before deploy
+# help us to see if we have an error on compile before deploy
+##############
+
+    - name: " Dump BDD / Clear Cache,Log "
+      include: "{{ env_vars.PRJ_LOCAL_PATH }}/config/deploy/includes/local_instruction.yaml"
+
+##############
+# Ask some details to user about this deploy
+##############
+
+- name: Where we deploy
+  hosts: localhost
+  vars_prompt:
+    - name: toEnv
+      prompt: "Which env ( preprod | prod ) ?"
+      private: no
+    - name: updatePublicData
+      prompt: "Would you like to send public/data ( no | yes ) ?"
+      private: no
+    - name: addEnvLocal
+      prompt: "create first formatted .env.local, ( required on first deploy - no | yes ) ?"
+      private: no
+    - name: enableHtaccess
+      prompt: "create .htpasswd & .htaccess, ( required on first deploy - no | yes ) ?"
+      private: no
+  tasks:
+    - set_fact:
+        toEnv={{toEnv | trim }}
+        updatePublicData={{updatePublicData | trim }}
+        addEnvLocal={{addEnvLocal | trim }}
+        enableHtaccess={{enableHtaccess | trim }}
+
+
+##############
+# In case of first deploy, we must init default conf file
+# that we declared on ansistrano_shared_files else deploy will trigger an error
+##############
+
+- name: "Create .htaccess with correct path to htpasswd"
+  hosts: "localhost"
+  vars:
+    PRJ_REMOTE_PATH : "{{hostvars['localhost']['env_vars']['PRJ_PROD_PATH'] if hostvars['localhost']['toEnv'] == 'prod' else hostvars['localhost']['env_vars']['PRJ_PREPROD_PATH']}}"
+  tasks:
+    - name : "load template in .htaccess "
+      template:
+        src: "default/.htaccess_pass"
+        dest: "default/.htaccess"
+
+- name: "Init default empty conf"
+  hosts: "{{hostvars['localhost']['toEnv']}}"
+  vars:
+    PRJ_REMOTE_PATH : "{{hostvars['localhost']['env_vars']['PRJ_PROD_PATH'] if hostvars['localhost']['toEnv'] == 'prod' else hostvars['localhost']['env_vars']['PRJ_PREPROD_PATH']}}"
+  tasks:
+    - name: "Create path"
+      file:
+        path: "{{ item }}"
+        state: directory
+      loop:
+      - "{{PRJ_REMOTE_PATH}}/shared/var"
+      - "{{PRJ_REMOTE_PATH}}/shared/bck"
+      - "{{PRJ_REMOTE_PATH}}/shared/node_modules"
+      - "{{PRJ_REMOTE_PATH}}/shared/vendor"
+      - "{{PRJ_REMOTE_PATH}}/shared/public"
+      - "{{PRJ_REMOTE_PATH}}/shared/public/build"
+      - "{{PRJ_REMOTE_PATH}}/shared/public/data"
+      when: "hostvars['localhost']['addEnvLocal'] == true "
+    - name: "Init .env.local   "
+      synchronize:
+        src: "{{hostvars['localhost']['env_vars']['PRJ_LOCAL_PATH']}}/config/deploy/default/.env.local"
+        dest: "{{PRJ_REMOTE_PATH}}/shared/."
+        delete: yes
+        recursive: yes
+      when: "hostvars['localhost']['addEnvLocal'] == true "
+    - name: "Init .env   "
+      shell:
+         " cd {{PRJ_REMOTE_PATH}}/shared && rm -f .env && ln -s .env.local .env "
+      when: "hostvars['localhost']['addEnvLocal'] == true "
+    - name: "Init .htaccess  "
+      synchronize:
+        src: "{{hostvars['localhost']['env_vars']['PRJ_LOCAL_PATH']}}/config/deploy/default/.htaccess"
+        dest: "{{PRJ_REMOTE_PATH}}/shared/public/.htaccess"
+        delete: yes
+        recursive: yes
+      when: "hostvars['localhost']['enableHtaccess'] == true "
+    - name: "Init .htpasswd  "
+      synchronize:
+        src: "{{hostvars['localhost']['env_vars']['PRJ_LOCAL_PATH']}}/config/deploy/default/.htpasswd"
+        dest: "{{PRJ_REMOTE_PATH}}/shared/.htpasswd"
+        delete: yes
+        recursive: yes
+      when: "hostvars['localhost']['enableHtaccess'] == true "
+
+##############
+# Deploy to specified environnement
+# on server that we declared in .hosts.yaml
+##############
+
+- name: "Deploy from dev to preprod"
+  hosts: "{{hostvars['localhost']['toEnv']}}"
+  connection: ssh
+  remote_user: '{{ansible_user}}'
+  vars:
+    ansistrano_deploy_from: "{{hostvars['localhost']['env_vars']['PRJ_LOCAL_PATH']}}/"
+    ansistrano_deploy_to: "{{hostvars['localhost']['env_vars']['PRJ_PROD_PATH'] if hostvars['localhost']['toEnv'] == 'prod' else hostvars['localhost']['env_vars']['PRJ_PREPROD_PATH']}}"
+    ansistrano_releases_path: "{{ ansistrano_deploy_to }}/{{ ansistrano_version_dir }}"
+    ansistrano_shared_path: "{{ ansistrano_deploy_to }}/shared"
+    ansistrano_current_path: "{{ ansistrano_deploy_to }}/current"
+    ansistrano_shared_rsync_copy_path: "{{ ansistrano_shared_path }}/.shared-copy"
+    ansistrano_ensure_shared_paths_exist: yes
+    ansistrano_ensure_basedirs_shared_files_exist: yes
+    ansistrano_version_dir: "releases"
+    ansistrano_current_dir: "current"
+    ansistrano_current_via: "symlink"
+    ansistrano_shared_files:
+      - ".env"
+      - ".htpasswd"
+      - "public/.htaccess"
+    ansistrano_shared_paths:
+      - "var"
+      - "bck"
+      - "node_modules"
+      - "vendor"
+      - "public/build"
+      - "public/data"
+  roles:
+    - { role: ansistrano.deploy }
+
+##############
+# Task to run if we choose to override folder public/data
+##############
+
+- name: "Init Data/conf"
+  hosts: "{{hostvars['localhost']['toEnv']}}"
+  vars:
+    PRJ_REMOTE_PATH : "{{hostvars['localhost']['env_vars']['PRJ_PROD_PATH'] if hostvars['localhost']['toEnv'] == 'prod' else hostvars['localhost']['env_vars']['PRJ_PREPROD_PATH']}}"
+  tasks:
+    - name: "Create backup of old data"
+      shell:
+        " cd {{PRJ_REMOTE_PATH}}/shared/public/ && mkdir -p data && tar czvf data.tar.gz data "
+      when: "hostvars['localhost']['updatePublicData'] == true "
+    - name: "Override/Send public/data   "
+      synchronize:
+        src: "{{hostvars['localhost']['env_vars']['PRJ_LOCAL_PATH']}}/public/data"
+        dest: "{{PRJ_REMOTE_PATH}}/shared/public/."
+        delete: yes
+        recursive: yes
+      when: "hostvars['localhost']['updatePublicData'] == true "
+
+##############
+# Instruction after deploy
+##############
+
+- name: POST DEPLOY
+  hosts: "{{hostvars['localhost']['toEnv']}}"
+  vars:
+      PRJ_REMOTE_PATH : "{{hostvars['localhost']['env_vars']['PRJ_PROD_PATH'] if hostvars['localhost']['toEnv'] == 'prod' else hostvars['localhost']['env_vars']['PRJ_PREPROD_PATH']}}"
+      APP_ENV : "{{hostvars['localhost']['env_vars']['APP_ENV']}}"
+  tasks:
+    - name: " Liste of instrcutions "
+      include: "{{ hostvars['localhost']['env_vars']['PRJ_LOCAL_PATH']}}/config/deploy/includes/remote_instruction.yaml"
