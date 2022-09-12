@@ -1,5 +1,5 @@
 # PlaybookAnsibleSymfony
-Custom Playbook ansible for symfony, hover webhost OVH
+Custom Playbook ansible for symfony, dev to webhost OVH
 
 
 Command : 
