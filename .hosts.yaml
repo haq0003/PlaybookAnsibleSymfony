@@ -1,0 +1,10 @@
+all:
+    hosts:
+        preprod:
+            ansible_host: ssh.xxxxxx.hosting.ovh.net
+            ansible_port: 22
+            ansible_user: xxxxxxx
+        prod:
+            ansible_host: ssh.xxxxxxx.hosting.ovh.net
+            ansible_port: 22
+            ansible_user: xxxxxxx
